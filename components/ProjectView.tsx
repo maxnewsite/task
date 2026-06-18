@@ -91,6 +91,15 @@ export const ProjectView: React.FC<ProjectViewProps> = ({ board, onUpdateBoard, 
     setEditingTask(updatedTask);
   };
 
+  // Lightweight in-place update used by analytics views (matrix, priority, calendar, graph).
+  // Does not touch editingTask so it works while the modal is closed.
+  const handleAnalyticsTaskUpdate = (updatedTask: Task) => {
+    onUpdateBoard({
+      ...board,
+      tasks: { ...board.tasks, [updatedTask.id]: updatedTask }
+    });
+  };
+
   const handleDeleteTask = (taskId: string) => {
     const newTasks = { ...board.tasks };
     delete newTasks[taskId];
@@ -385,10 +394,10 @@ export const ProjectView: React.FC<ProjectViewProps> = ({ board, onUpdateBoard, 
              </div>
         )}
 
-        {viewMode === 'priority' && <PriorityView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} />}
-        {viewMode === 'matrix' && <MatrixView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} />}
-        {viewMode === 'graph' && <GraphView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} />}
-        {viewMode === 'calendar' && <CalendarView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} />}
+        {viewMode === 'priority' && <PriorityView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} onTaskUpdate={handleAnalyticsTaskUpdate} />}
+        {viewMode === 'matrix' && <MatrixView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} onTaskUpdate={handleAnalyticsTaskUpdate} />}
+        {viewMode === 'graph' && <GraphView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} onTaskUpdate={handleAnalyticsTaskUpdate} />}
+        {viewMode === 'calendar' && <CalendarView tasks={allBoardTasks} onTaskClick={(t) => { setEditingTask(t); setIsModalOpen(true); }} onTaskUpdate={handleAnalyticsTaskUpdate} />}
 
       </main>
 
