@@ -192,37 +192,43 @@ export const PriorityView: React.FC<ViewProps> = ({ tasks, onTaskClick, onTaskUp
 };
 
 // ───────────────────────────────────────────────────────────────────────────────
-// 2. MATRIX VIEW — drag dots to change priority+impact
+// 2. MATRIX VIEW — per-cell selector chip + side-panel expander
+//    Click a cell chip to expand all tasks in that cell. Drag tasks from the
+//    panel onto any other cell to reallocate (changes priority + impact).
 // ───────────────────────────────────────────────────────────────────────────────
 export const MatrixView: React.FC<ViewProps> = ({ tasks, onTaskClick, onTaskUpdate }) => {
   const plotRef = useRef<HTMLDivElement>(null);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [hoverCell, setHoverCell] = useState<{ p: number; i: number } | null>(null);
+  const [selectedCell, setSelectedCell] = useState<{ p: number; i: number } | null>(null);
 
-  // Convert priority (1=top) to top% within the plot area
-  const priorityToTop = (p: number) => ((p - 1) / 4) * 100;
-  const impactToLeft = (i: number) => ((i - 1) / 4) * 100;
+  // 5×5 grid with cells of 20% each. Center of cell (p,i) is at (p-0.5)*20%.
+  const cellCenterTop = (p: number) => (p - 0.5) * 20;
+  const cellCenterLeft = (i: number) => (i - 0.5) * 20;
 
-  // Reverse: given clientX/Y over the plot, compute snapped priority/impact
+  // Reverse: clientX/Y → snapped (priority, impact)
   const coordsToPI = (clientX: number, clientY: number) => {
     const rect = plotRef.current!.getBoundingClientRect();
-    const xPct = ((clientX - rect.left) / rect.width) * 100;
-    const yPct = ((clientY - rect.top) / rect.height) * 100;
-    const impact = clamp15((xPct / 100) * 4 + 1);
-    const priority = clamp15((yPct / 100) * 4 + 1);
+    const xPct = Math.max(0, Math.min(99.99, ((clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.max(0, Math.min(99.99, ((clientY - rect.top) / rect.height) * 100));
+    const impact = clamp15(Math.floor(xPct / 20) + 1);
+    const priority = clamp15(Math.floor(yPct / 20) + 1);
     return { priority, impact };
   };
 
-  // Group tasks by (priority, impact) cell so overlapping dots fan out
+  // Pre-fill all 25 cells so iteration is stable
   const cells = useMemo(() => {
     const m = new Map<string, Task[]>();
+    for (let p = 1; p <= 5; p++) for (let i = 1; i <= 5; i++) m.set(`${p}-${i}`, []);
     tasks.forEach(t => {
-      const k = `${clamp15(t.priority)}-${clamp15(t.impact)}`;
-      if (!m.has(k)) m.set(k, []);
-      m.get(k)!.push(t);
+      m.get(`${clamp15(t.priority)}-${clamp15(t.impact)}`)!.push(t);
     });
     return m;
   }, [tasks]);
+
+  const selectedTasks = selectedCell
+    ? cells.get(`${selectedCell.p}-${selectedCell.i}`) || []
+    : [];
 
   const onDragOverPlot = (e: React.DragEvent) => {
     e.preventDefault();
@@ -243,54 +249,43 @@ export const MatrixView: React.FC<ViewProps> = ({ tasks, onTaskClick, onTaskUpda
     const { priority, impact } = coordsToPI(e.clientX, e.clientY);
     if (task.priority === priority && task.impact === impact) return;
     onTaskUpdate({ ...task, priority, impact });
-  };
-
-  // Build a 5×5 background grid for visual snap-feedback
-  const gridCells = [];
-  for (let p = 1; p <= 5; p++) {
-    for (let i = 1; i <= 5; i++) {
-      const isHover = hoverCell?.p === p && hoverCell?.i === i;
-      const tone = PRIORITY_TONE[p];
-      gridCells.push(
-        <div
-          key={`${p}-${i}`}
-          className={`border-r border-b border-dashed border-slate-200 transition-colors ${
-            isHover ? `${tone.bg}/60` : ''
-          }`}
-        />
-      );
+    // If the side panel was open, follow the moved task so the user can keep reallocating
+    if (selectedCell && selectedCell.p === task.priority && selectedCell.i === task.impact) {
+      setSelectedCell({ p: priority, i: impact });
     }
-  }
+  };
 
   return (
     <div className="p-6 h-full flex flex-col bg-slate-50">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold text-slate-800">Impact / Priority Matrix</h2>
-        <span className="text-xs text-slate-500">Drag any dot to change its priority &amp; impact — snaps to the 5×5 grid.</span>
+        <span className="text-xs text-slate-500">Click a cell badge to expand its tasks. Drag any task onto another cell to reallocate.</span>
       </div>
 
-      <div className="flex-1 flex">
-        {/* Y axis */}
-        <div className="flex flex-col w-12 flex-none mr-2">
+      <div className="flex-1 flex gap-4 min-h-0">
+        {/* Y axis labels */}
+        <div className="flex flex-col w-12 flex-none">
           <div className="h-8" />
           <div className="flex-1 grid grid-rows-5 text-xs font-bold text-slate-400 uppercase tracking-wide text-right pr-2">
             {[1, 2, 3, 4, 5].map(p => (
-              <div key={p} className="flex items-start justify-end pt-1">P{p}</div>
+              <div key={p} className="flex items-center justify-end">P{p}<br/>{PRIORITY_LABELS[p][0]}</div>
             ))}
           </div>
           <div className="h-8" />
         </div>
 
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-w-0">
           {/* X axis labels (top) */}
           <div className="h-8 flex">
             {[1, 2, 3, 4, 5].map(i => (
-              <div key={i} className="flex-1 text-center text-xs font-bold text-slate-400 uppercase tracking-wide">I{i}</div>
+              <div key={i} className="flex-1 text-center text-xs font-bold text-slate-400 uppercase tracking-wide">
+                I{i}<span className="opacity-60"> · {IMPACT_LABELS[i][0]}</span>
+              </div>
             ))}
           </div>
 
           <div className="flex-1 relative bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            {/* Quadrant tints */}
+            {/* Quadrant tints (decorative) */}
             <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 pointer-events-none">
               <div className="bg-orange-50/40 p-2 flex items-start"><span className="text-[10px] text-orange-500 font-bold uppercase">Quick Wins</span></div>
               <div className="bg-red-50/40 p-2 flex items-start justify-end"><span className="text-[10px] text-red-500 font-bold uppercase">Critical Focus</span></div>
@@ -298,12 +293,27 @@ export const MatrixView: React.FC<ViewProps> = ({ tasks, onTaskClick, onTaskUpda
               <div className="bg-blue-50/40 p-2 flex items-end justify-end"><span className="text-[10px] text-blue-500 font-bold uppercase">Strategic</span></div>
             </div>
 
-            {/* Snap grid */}
+            {/* 5×5 snap grid with hover + selected highlights */}
             <div className="absolute inset-0 grid grid-cols-5 grid-rows-5 pointer-events-none">
-              {gridCells}
+              {Array.from({ length: 25 }).map((_, idx) => {
+                const p = Math.floor(idx / 5) + 1;
+                const i = (idx % 5) + 1;
+                const isHover = hoverCell?.p === p && hoverCell?.i === i;
+                const isSel = selectedCell?.p === p && selectedCell?.i === i;
+                const tone = PRIORITY_TONE[p];
+                return (
+                  <div
+                    key={`${p}-${i}`}
+                    className={`border-r border-b border-dashed border-slate-200 transition-colors ${
+                      isSel ? `${tone.bg}/80 border-solid ${tone.border}` :
+                      isHover ? `${tone.bg}/50` : ''
+                    }`}
+                  />
+                );
+              })}
             </div>
 
-            {/* Drop / drag area */}
+            {/* Drop area + per-cell selector chips */}
             <div
               ref={plotRef}
               onDragOver={onDragOverPlot}
@@ -312,21 +322,87 @@ export const MatrixView: React.FC<ViewProps> = ({ tasks, onTaskClick, onTaskUpda
               className="absolute inset-0"
             >
               {Array.from(cells.entries()).map(([key, cellTasks]) => {
+                if (cellTasks.length === 0) return null;
                 const [pStr, iStr] = key.split('-');
                 const p = parseInt(pStr, 10);
                 const i = parseInt(iStr, 10);
-                const baseTop = priorityToTop(p);
-                const baseLeft = impactToLeft(i);
-                // Fan multiple tasks in a small cluster around the cell center
-                return cellTasks.map((task, idx) => {
-                  const n = cellTasks.length;
-                  // Cluster radius scales with count
-                  const r = n === 1 ? 0 : 8;
-                  const angle = (idx / Math.max(n, 1)) * Math.PI * 2;
-                  const dx = Math.cos(angle) * r;
-                  const dy = Math.sin(angle) * r;
-                  const tone = PRIORITY_TONE[p];
-                  const isDragging = dragTaskId === task.id;
+                const tone = PRIORITY_TONE[p];
+                const isSelected = selectedCell?.p === p && selectedCell?.i === i;
+                const single = cellTasks.length === 1;
+                const onlyTask = single ? cellTasks[0] : null;
+                const previewTitles = cellTasks.slice(0, 3).map(t => t.title).join('\n');
+                const more = cellTasks.length > 3 ? `\n…and ${cellTasks.length - 3} more` : '';
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    draggable={single}
+                    onDragStart={(e) => {
+                      if (!onlyTask) return;
+                      setDragTaskId(onlyTask.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', onlyTask.id);
+                    }}
+                    onDragEnd={() => { setDragTaskId(null); setHoverCell(null); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedCell(isSelected ? null : { p, i });
+                    }}
+                    title={`P${p} · I${i}${cellTasks.length > 1 ? ` — ${cellTasks.length} tasks` : ''}\n${previewTitles}${more}`}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-1 pr-3 py-1 rounded-full font-bold text-white shadow-lg ring-2 ring-white transition-all ${tone.solid} ${
+                      isSelected ? 'scale-110 ring-4 ring-offset-1' : 'hover:scale-110 hover:z-20'
+                    } ${single ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+                    style={{ top: `${cellCenterTop(p)}%`, left: `${cellCenterLeft(i)}%` }}
+                  >
+                    <span className="w-7 h-7 rounded-full bg-white/25 flex items-center justify-center text-base leading-none">
+                      {cellTasks.length}
+                    </span>
+                    <span className="text-[10px] uppercase opacity-90 leading-none whitespace-nowrap">
+                      P{p}·I{i}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* X axis label (bottom) */}
+          <div className="h-8 flex items-center justify-center">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              Impact (low → high) →
+            </div>
+          </div>
+        </div>
+
+        {/* Side panel: tasks in selected cell (or hint) */}
+        <aside className={`w-72 flex-none bg-white rounded-xl border shadow-sm flex flex-col transition-all ${
+          selectedCell ? PRIORITY_TONE[selectedCell.p].border : 'border-slate-200'
+        }`}>
+          {selectedCell ? (
+            <>
+              <div className={`px-4 py-3 border-b text-sm font-bold flex items-center justify-between ${PRIORITY_TONE[selectedCell.p].bg} ${PRIORITY_TONE[selectedCell.p].text} ${PRIORITY_TONE[selectedCell.p].border}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${PRIORITY_TONE[selectedCell.p].solid}`} />
+                  Cell P{selectedCell.p} · I{selectedCell.i}
+                </div>
+                <button
+                  onClick={() => setSelectedCell(null)}
+                  className="text-xs font-normal opacity-70 hover:opacity-100"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="px-4 py-2 text-[11px] text-slate-500 border-b border-slate-100 bg-slate-50">
+                {PRIORITY_LABELS[selectedCell.p]} priority · {IMPACT_LABELS[selectedCell.i]} impact · {selectedTasks.length} task{selectedTasks.length !== 1 ? 's' : ''}
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
+                {selectedTasks.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic text-center py-6">
+                    No tasks left in this cell — drop one here to populate it.
+                  </div>
+                ) : selectedTasks.map(task => {
+                  const tone = PRIORITY_TONE[clamp15(task.priority)];
                   return (
                     <div
                       key={task.id}
@@ -338,43 +414,39 @@ export const MatrixView: React.FC<ViewProps> = ({ tasks, onTaskClick, onTaskUpda
                       }}
                       onDragEnd={() => { setDragTaskId(null); setHoverCell(null); }}
                       onClick={() => onTaskClick(task)}
-                      className={`absolute group cursor-grab active:cursor-grabbing transition-transform ${isDragging ? 'opacity-30 scale-90' : 'hover:scale-110 hover:z-20'}`}
-                      style={{
-                        top: `calc(${baseTop}% + ${dy}px + 5%)`,
-                        left: `calc(${baseLeft}% + ${dx}px + 10%)`,
-                        transform: 'translate(-50%, -50%)'
-                      }}
+                      className={`group bg-white border-l-4 border border-slate-200 rounded-lg p-2.5 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-blue-300 transition-all ${tone.border.replace('border-', 'border-l-')}`}
                     >
-                      <div className={`w-10 h-10 rounded-full ${tone.solid} text-white flex items-center justify-center text-sm font-bold shadow-lg ring-2 ring-white`}>
-                        {p}
+                      <div className="flex items-center justify-between mb-1.5">
+                        <PriorityChip task={task} onTaskUpdate={onTaskUpdate} />
+                        <GripVertical size={14} className="text-slate-300 group-hover:text-slate-500" />
                       </div>
-                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap text-[11px] font-medium text-slate-700 bg-white/90 px-1.5 py-0.5 rounded shadow-sm border border-slate-200 max-w-[160px] truncate pointer-events-none">
-                        {task.title}
-                      </div>
-                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity bg-slate-800 text-white text-[10px] p-1.5 rounded shadow z-30 whitespace-nowrap">
-                        P{p} · I{i}
+                      <div className="text-xs font-semibold text-slate-800 line-clamp-2 mb-1">{task.title}</div>
+                      <div className="flex items-center gap-3 text-[10px] text-slate-500">
+                        <ImpactChip task={task} onTaskUpdate={onTaskUpdate} />
+                        {task.dueDate && (
+                          <span className={`inline-flex items-center gap-1 ml-auto ${new Date(task.dueDate) < new Date() ? 'text-red-600 font-semibold' : ''}`}>
+                            <Clock size={10} />
+                            {new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          </span>
+                        )}
                       </div>
                     </div>
                   );
-                });
-              })}
+                })}
+              </div>
+              <div className="p-3 border-t border-slate-100 text-[11px] text-slate-500">
+                Drag any card onto another matrix cell to reallocate (changes both priority &amp; impact).
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center px-6 text-center text-slate-400">
+              <div className="text-xs font-bold uppercase tracking-widest mb-2">Cell Viewer</div>
+              <div className="text-xs leading-relaxed">
+                Click any badge on the matrix to expand the tasks at that priority + impact, then drag them to any other cell to reallocate.
+              </div>
             </div>
-          </div>
-
-          {/* X axis labels (bottom) */}
-          <div className="h-8 flex items-center">
-            <div className="flex-1 text-center text-xs font-bold text-slate-400 uppercase tracking-widest">
-              Impact (low → high) &nbsp;→
-            </div>
-          </div>
-        </div>
-
-        {/* Y axis label (right) */}
-        <div className="w-8 flex items-center justify-center">
-          <div className="-rotate-90 text-xs font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">
-            ← Priority (high → low)
-          </div>
-        </div>
+          )}
+        </aside>
       </div>
     </div>
   );
