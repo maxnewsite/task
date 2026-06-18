@@ -1,0 +1,6 @@
+{
+  "name": "Task",
+  "description": "A local, offline-first Kanban board with Trello-like features and Gemini AI integration for smart task breakdown and planning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
